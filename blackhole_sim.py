@@ -7,32 +7,43 @@ c = 3e8
 G = 6.67e-11
 mass = 2e30 # mass can be adjusted and everything else will adjust itself
 
-mass_ratio = (mass/(2e30))
+mass_ratio = (mass / (2e30))
 rs = 2 * G * mass / (c**2)
-dlambda = (rs/c) * 0.1
+dlambda = (rs / c) * 0.1
 
-start = 9 # the number  of rs the photons will start from the blackhole
-hight = 5 * rs
-width = start/5 * hight
+start = 9 # the number of rs the photons will start from the blackhole
+height = 5 * rs
+width = (start / 5) * height
 
 ph_num = 28
-ph_range = np.linspace(hight, 0, ph_num)
+ph_range = np.linspace(height, 0, ph_num)
 # for a single orbiting photon use ph_range=np.linspace(2.5873539027501*rs, 2.6*rs, ph_num) 
 # and mass=2e30 and start=9 and frames=300
 
 class Blackhole:
-    def __init__(self, x, y):
+    def __init__(self, x, y, ax, rs):
         self.x = x
         self.y = y
+        self.rs = rs
+ 
+        shadow_radius = (3 * np.sqrt(3) / 2) * self.rs
 
-        ax.add_patch(plt.Circle((self.x, self.y), rs, color='r', zorder=2)) # event horizon
-        ax.add_patch(plt.Circle((self.x, self.y), rs*1.5, color='c', fill = False)) # photon sphere
-        ax.add_patch(plt.Circle((self.x, self.y), rs*2.6, color='c', fill = False)) # image
+        # Event horizon
+        ax.add_patch(plt.Circle((self.x, self.y), self.rs, color='r', zorder=2))
+        # Photon sphere
+        ax.add_patch(plt.Circle((self.x, self.y), self.rs * 1.5, color='c', fill=False))
+        # Shadow / image
+        ax.add_patch(plt.Circle((self.x, self.y), shadow_radius, color='c', fill = False, 
+                                linestyle="--"))
         
 
 class Photon:
-    def __init__(self, x, y):
-        # cartesian coords
+    ## Generates one instance of a simulated photon that gontains methods to update its position
+    def __init__(self, x, y, ax, rs, dlambda, mass_ratio):
+        self.rs = rs
+        self.dlambda = dlambda
+
+        # Cartesian coords
         self.pos = np.array([x, y])
         self.v   = np.array([-c, 0])
         
@@ -54,24 +65,25 @@ class Photon:
         # true if photon outside of bh
         self.active = True
 
-
+    ## Updates the photon position
     def ph_update(self):
-        if (self.r < rs): 
+        if self.r < rs: 
             self.active = False
             return
 
-        # convert update to cartesian
+        # Convert update to cartesian
         self.pos[0] = np.cos(self.theta) * self.r
         self.pos[1] = np.sin(self.theta) * self.r
 
-        # update trail
+        # Update trail history
         self.path_x.append(self.pos[0])
         self.path_y.append(self.pos[1])
-        
+
+        # Update Matplotlib artists
         self.photon.set_center((self.pos[0], self.pos[1]))
         self.trail.set_data(self.path_x, self.path_y)
 
-
+    ## Calcualtes future position based on Schwarzschild null geodesics
     def geodesic(self, state):
         r, theta, dr, dtheta = state
 
@@ -80,7 +92,7 @@ class Photon:
 
         return np.array([dr, dtheta, ddr, ddtheta])
 
-
+    ## Integrates the position
     def rk4(self):
         state = np.array([self.r, self.theta, self.dr, self.dtheta])
 
@@ -94,7 +106,6 @@ class Photon:
         self.dr     += (dlambda/6.0) * (k1[2] + 2*k2[2] + 2*k3[2] + k4[2])
         self.dtheta += (dlambda/6.0) * (k1[3] + 2*k2[3] + 2*k3[3] + k4[3])
 
-
 # window setup
 fig = plt.figure()
 fig.set_facecolor('k')
@@ -103,7 +114,7 @@ fig.tight_layout()
 ax = fig.add_subplot(aspect = 'equal')
 ax.set_facecolor('k')
 ax.set_xlim(-width/(start/5), width)
-ax.set_ylim(-hight, hight)
+ax.set_ylim(-height, height)
 
 ax.yaxis.set_label_position("right")
 ax.yaxis.tick_right()
@@ -112,8 +123,8 @@ ax.tick_params(axis='both', colors='w')
 for spine in ax.spines.values():
     spine.set_color('w')
 
-tick_xpos = np.arange(-width/(start/5), width+mass_ratio, rs)
-tick_ypos = np.arange(-hight, hight+mass_ratio, rs)
+tick_xpos = np.arange(-width / (start / 5), width + mass_ratio, rs)
+tick_ypos = np.arange(-height, height + mass_ratio, rs)
 ax.set_xticks(tick_xpos)
 ax.set_yticks(tick_ypos)
 
@@ -124,8 +135,9 @@ ax.set_yticklabels(tick_ylables.astype(int))
 ax.set_xlabel('Measured in Schwarzschild Radii', color='w')
 
 # creating the objects
-phs = [Photon(width-100*mass_ratio, i) for i in ph_range]
-bh = Blackhole(0,0)
+phs = [Photon(width - 100 * mass_ratio, i) for i in ph_range]
+bh = Blackhole(0, 0, ax, rs)
+
 print('Finished creating photons and blackhole\nCreating animation...')
 
 # animation
