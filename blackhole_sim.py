@@ -12,17 +12,14 @@ mass_ratio = (mass / (2e30))
 rs = 2 * G * mass / (c**2)
 dlambda = (rs / c) * 0.1
 
-start = 9 
+start = 9  # How far away the photon(s) start
 height = 5 * rs
 width = (start / 5) * height
 
 ph_num = 28
 ph_range = np.linspace(height, 0, ph_num)
-
 # For a single orbiting photon use:
-#    ph_range = np.linspace(2.5873539027501* rs, 2.6 * rs, ph_num) 
-#    mass = 2e30
-#    start = 9
+# ph_range = [((3 * np.sqrt(3) / 2) - 1.06e-2) * rs] 
 
 
 class Blackhole:
@@ -49,8 +46,7 @@ class Blackhole:
                                 fill=False))
         # Drawing the shadow/image.
         ax.add_patch(plt.Circle((self.x, self.y), shadow_radius, color='c', 
-                                fill=False, linestyle="--"))
-        
+                                fill=False, linestyle="--"))       
 
 
 class Photon:
@@ -170,21 +166,26 @@ ax.set_yticklabels(tick_ylables.astype(int))
 ax.set_xlabel('Measured in Schwarzschild Radii', color='w')
 
 # Creating the balckhole and photons
-phs = [Photon(width - 100 * mass_ratio, i, ax, rs, dlambda, mass_ratio) for i in ph_range]
+phs = [Photon(width - 100 * mass_ratio, i, ax, rs, dlambda, mass_ratio)
+        for i in ph_range]
 bh = Blackhole(0, 0, ax, rs)
 
 print('Finished creating photons and blackhole\nCreating animation...')
 
 # Creates the animation
 def animate(i):
+    artists = []
     for ph in phs:
         if ph.active:
             ph.rk4()
             ph.ph_update()
 
-    return [ph.trail for ph in phs]
+            artists.append(ph.photon)
+            artists.append(ph.trail)
 
-ani = FuncAnimation(fig, animate, frames=300) 
+    return artists
+
+ani = FuncAnimation(fig, animate, frames=300, blit=True, interval=20) 
 ani.save("blackhole.gif", writer=PillowWriter(fps=50), dpi=200)
 
 print('Done')
