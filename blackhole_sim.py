@@ -8,18 +8,18 @@ c = 3e8
 G = 6.67e-11
 mass = 2e30
 
-mass_ratio = (mass / (2e30))
-rs = 2 * G * mass / (c**2)
-dlambda = (rs / c) * 0.1
+mass_ratio = mass / (2e30)
+rs = (2 * G * mass) / (c**2)
+dlambda = 0.1 * (rs/c)
 
 start = 9  # How far away the photon(s) start
 height = 5 * rs
-width = (start / 5) * height
+width = (start/5) * height
 
 ph_num = 28
 ph_range = np.linspace(height, 0, ph_num)
 # For a single orbiting photon use:
-# ph_range = [((3 * np.sqrt(3) / 2) - 1.06e-2) * rs] 
+# ph_range = [(((3*np.sqrt(3)) / 2) - (1.06e-2)) * rs] 
 
 
 class Blackhole:
@@ -36,7 +36,7 @@ class Blackhole:
         self.y = y
         self.rs = rs
  
-        shadow_radius = (3 * np.sqrt(3) / 2) * self.rs
+        shadow_radius = ((3*np.sqrt(3)) / 2) * self.rs
 
         # Drawing the event horizon.
         ax.add_patch(plt.Circle((self.x, self.y), self.rs, color='r', 
@@ -72,8 +72,8 @@ class Photon:
         # Setting up polar coordinates.
         self.r = np.hypot(x, y)
         self.theta = np.atan2(y, x)
-        self.dr = (self.pos[0] * self.v[0] + self.pos[1] * self.v[1]) / self.r
-        self.dtheta = ((self.pos[0] * self.v[1] - self.pos[1] * self.v[0]) 
+        self.dr = ((self.pos[0]*self.v[0]) + (self.pos[1]*self.v[1])) / self.r
+        self.dtheta = (((self.pos[0]*self.v[1]) - (self.pos[1]*self.v[0])) 
                        / (self.r**2))
         
         # Photon trail history start
@@ -112,8 +112,8 @@ class Photon:
         """
         r, theta, dr, dtheta = state
 
-        ddr = (r - 1.5 * rs) * (dtheta**2)
-        ddtheta = -2 * dr * dtheta / r
+        ddr = (r - (1.5*rs)) * (dtheta**2)
+        ddtheta = (-2 * dr * dtheta) / r
 
         return np.array([dr, dtheta, ddr, ddtheta])
 
@@ -125,16 +125,14 @@ class Photon:
         state = np.array([self.r, self.theta, self.dr, self.dtheta])
 
         k1 = self.geodesic(state)
-        k2 = self.geodesic(state + dlambda/2*k1)
-        k3 = self.geodesic(state + dlambda/2*k2)
-        k4 = self.geodesic(state + dlambda*k3)
+        k2 = self.geodesic(state + ((dlambda/2) * k1))
+        k3 = self.geodesic(state + ((dlambda/2) * k2))
+        k4 = self.geodesic(state + (dlambda*k3))
 
-        self.r += (dlambda / 6.0) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0])
-        self.theta += (dlambda / 6.0) * (k1[1] + 2 * k2[1] + 2 * k3[1] 
-                         + k4[1])
-        self.dr += (dlambda / 6.0) * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2])
-        self.dtheta += (dlambda / 6.0) * (k1[3] + 2 * k2[3] + 2 * k3[3] 
-                         + k4[3])
+        self.r += (dlambda/6.0) * (k1[0] + (2*k2[0]) + (2*k3[0]) + k4[0])
+        self.theta += (dlambda/6.0) * (k1[1] + (2*k2[1]) + (2*k3[1]) + k4[1])
+        self.dr += (dlambda/6.0) * (k1[2] + (2*k2[2]) + (2*k3[2]) + k4[2])
+        self.dtheta += (dlambda/6.0) * (k1[3] + (2*k2[3]) + (2*k3[3]) + k4[3])
 
 # Window setup
 fig = plt.figure()
@@ -166,7 +164,7 @@ ax.set_yticklabels(tick_ylables.astype(int))
 ax.set_xlabel('Measured in Schwarzschild Radii', color='w')
 
 # Creating the balckhole and photons
-phs = [Photon(width - 100 * mass_ratio, i, ax, rs, dlambda, mass_ratio)
+phs = [Photon(width - (100*mass_ratio), i, ax, rs, dlambda, mass_ratio)
         for i in ph_range]
 bh = Blackhole(0, 0, ax, rs)
 
