@@ -1,26 +1,39 @@
 import numpy as np
+from PIL import Image
 
 # Constants
 RS = 1.0
-INCLINATION_DEG = 45.0
-CAMERA_DIST = 16.0 * RS
+INCLINATION_DEG = 88.0
+TILT_DEG = 5.0
+CAMERA_DIST = 30.0 * RS
 
-WIDTH = 640
+WIDTH = 620
 HEIGHT = 480
 
 FOV_DEG = 42.0
 MAX_WINDINGS = 3.0
 DPHI = 0.01
+ESCAPE_R = 80.0 * RS
+
+DISK_INNER = 3.0 * RS
+DISK_OUTER = 16.0 * RS
+# To prevent a funny artifact use DPHI = 0.003, WIDTH = 960, HEIGHT = 720
 
 # Camera setup
 incl = np.radians(INCLINATION_DEG)
+tilt = np.radians(TILT_DEG)
 cam_pos = np.array([np.sin(incl), 0.0, np.cos(incl)]) * CAMERA_DIST
 
 forward = -cam_pos / np.linalg.norm(cam_pos)
 world_up = np.array([0.0, 0.0, 1.0])
+if abs(np.dot(forward, world_up)) > 0.999:
+    world_up = np.array([0.0, 1.0, 0.0])
+
 right = np.cross(forward, world_up)
 right /= np.linalg.norm(right)
 up = np.cross(right, forward)
+
+right, up = (np.cos(tilt) * right + np.sin(tilt) * up, -np.sin(tilt) * right + np.cos(tilt) * up,)
 
 fov = np.radians(FOV_DEG)
 aspect = WIDTH / HEIGHT
@@ -62,6 +75,7 @@ phi = np.zeros(N)
 
 active = np.ones(N, dtype=bool)
 hit_disk = np.zeros(N, dtype=bool)
+result_color = np.zeros((N, 3))
 
 prev_z = pos0[:, 2].copy()
 prev_pos = pos0.copy()
@@ -97,5 +111,50 @@ for step in range(nsteps):
     r_new = 1.0 / np.clip(u_new, 1e-8, None)
     cosphi = np.cos(phi[idx])
     sinphi = np.sin(phi[idx])
-    pos_new = r_new[:, None] * (cosphi[:, None] * e_r[idx] + sinphi[;, None] * e_phi[idx])
+    pos_new = r_new[:, None] * (cosphi[:, None] * e_r[idx] + sinphi[:, None] 
+                                * e_phi[idx])
     z_new = pos_new[:, 2]
+
+    # Check if the photon impacts the accretion disk
+    captured = r_new <= RS * 1.001
+    escaped = (r_new > ESCAPE_R)
+
+    z_prev_sub = prev_z[idxs]
+    crossed = ((np.sign(z_new) != np.sign(z_prev_sub)) & (r_new >= DISK_INNER)
+                & (r_new <= DISK_OUTER))
+
+    if crossed.any():
+        t = z_prev_sub[crossed] / (z_prev_sub[crossed] - z_new[crossed])
+        p_prev = prev_pos[idxs[crossed]]
+        p_new = pos_new[crossed]
+
+        hit_p = p_prev + t[:, None] * (p_new - p_prev)
+        ci = idxs[crossed]
+        hit_disk[ci] = True
+        active[ci] = False
+
+    still = ~crossed
+    if (captured & still).any():
+        cidx = idxs[captured & still]
+        active[cidx] = False
+    if (escaped & still & ~captured).any():
+        eidx = idxs[escaped & still & ~captured]
+        active[eidx] = False
+
+    prev_z[idxs] = z_new
+    prev_pos[idxs] = pos_new
+
+# Assigning color
+result_color[:] = 0.0
+if hit_disk.any():
+    result_color[hit_disk] = result_color[hit_disk] + 255.0
+
+# Image output
+img = result_color.reshape(HEIGHT,WIDTH, 3)
+img = np.clip(img, 0.0, 1.0)
+img = img ** (1.0/2.0)
+img8 = (img * 255).astype(np.uint8)
+
+out = Image.fromarray(img8, mode='RGB')
+out.save('C:\\Users\\cedri\\Coding_Projects\\Black_Hole\\blackhole_lensing.png')
+print('Saved C:\\Users\\cedri\\Coding_Projects\\Black_Hole\\blackhole_lensing.png')
