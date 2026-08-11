@@ -2,24 +2,80 @@ import numpy as np
 from PIL import Image
 
 # Constants
-RS = 1.0
-INCLINATION_DEG = 87.0
-TILT_DEG = 5.0
-CAMERA_DIST = 30.0 * RS
+# To prevent a funny artifact use DPHI = 0.003, WIDTH = 960, HEIGHT = 720
+RS = 1.0  # Schwarzschild radius
+INCLINATION_DEG = 87.0  # Angle from the z-axis
+TILT_DEG = 5.0  # Angle of camera rotation (clockwise is positive)
+CAMERA_DIST = 30.0 * RS  # Distance of camera from the black hole
 
-WIDTH = 480
-HEIGHT = 370
+# Output resolution
+WIDTH = 960
+HEIGHT = 720
 
-FOV_DEG = 42.0
-MAX_WINDINGS = 3.0
-DPHI = 0.01
-ESCAPE_R = 80.0 * RS
+FOV_DEG = 42.0  # Camera field of view (degrees)
+DPHI = 0.003  # RK4 step size in the swept angle phi
+ESCAPE_R = 80.0 * RS  # Distance where a ray becomes "escaped"
 
+# How many times a ray can loop around (impacts the clarity of photon sphere)
+MAX_WINDINGS = 5.0
+
+# Accretion disk dimensions
 DISK_INNER = 3.0 * RS
 DISK_OUTER = 16.0 * RS
-# To prevent a funny artifact use DPHI = 0.003, WIDTH = 960, HEIGHT = 720
 
-# Camera setup
+# Star paramiters
+STAR_DENSITY = 0.0015  # Probability that a bakground pixel will be a star
+SEED = 7
+
+rng = np.random.default_rng(SEED)
+
+
+def deriv(u_, w_):
+    """
+    Derivatives for the first-order system equivalent to the Schwarzschild
+    photon orbit equation d^2u/dphi^2 = -u + (3/2) RS u^2
+
+    Parameters:
+        u_: the current value(s) of u = 1/r
+        w_: the current value(s) of du/dphi
+
+    Returns:
+        (du/dphi, dw/dphi)
+    """
+    return w_, -u_ + 1.5 * RS * (u_**2)
+
+
+def temperature_to_rgb(t):
+    """
+    Convert a normalized disk temerature to an RGB color 
+    (red -> orange -> yellow -> white)
+
+    Parameters:
+        t: array-like, temerature normalized to [0, 1], where 1.0 is the 
+        hottest (inner disk) and 0.0 is the coolest (outerdisk).
+
+    Returns:
+        Array of shape (..., 3) with RGB values in [0, 1].
+    """
+    t = np.clip(t, 0.0, 1.0)
+    stops = np.array([
+        #[ t ,  R  ,  G  ,   B ]
+        [0.00, 0.35, 0.02, 0.00],  # Dim deep red
+        [0.50, 1.00, 0.60, 0.05],  # Orange
+        [0.65, 1.00, 0.80, 0.20],  # Orange-yellow
+        [0.85, 1.00, 0.90, 0.35],  # Yellow-white
+        [0.98, 1.00, 1.00, 1.00],  # White
+        [1.00, 0.80, 0.95, 1.00],  # Bright blue-white
+    ])
+
+    r = np.interp(t, stops[:, 0], stops[:, 1])
+    g = np.interp(t, stops[:, 0], stops[:, 2])
+    bl = np.interp(t, stops[:, 0], stops[:, 3])
+
+    return np.stack([r, g, bl], axis=-1)
+
+
+# Setting up camera using provided constants
 incl = np.radians(INCLINATION_DEG)
 tilt = np.radians(TILT_DEG)
 cam_pos = np.array([np.sin(incl), 0.0, np.cos(incl)]) * CAMERA_DIST
@@ -33,7 +89,8 @@ right = np.cross(forward, world_up)
 right /= np.linalg.norm(right)
 up = np.cross(right, forward)
 
-right, up = (np.cos(tilt) * right + np.sin(tilt) * up, -np.sin(tilt) * right + np.cos(tilt) * up,)
+right, up = (np.cos(tilt) * right + np.sin(tilt) * up, 
+             -np.sin(tilt) * right + np.cos(tilt) * up,)
 
 fov = np.radians(FOV_DEG)
 aspect = WIDTH / HEIGHT
@@ -66,26 +123,24 @@ sinpsi = np.clip(sinpsi, 1e-6, 1.0)
 
 u0 = 1.0 / r0
 metric0 = np.clip(1.0 - RS * u0, 1e-12, None)
-b = r0 * sinpsi / np.sqrt(metric0)
-w0 = u0 * np.sqrt(metric0) * (cospsi / sinpsi)
+b = r0 * sinpsi / np.sqrt(metric0)  # Impact parameter
+w0 = u0 * np.sqrt(metric0) * (cospsi / sinpsi)  # du/dphi at phi=0
 
 u = u0.copy()
 w = w0.copy()
 phi = np.zeros(N)
 
-active = np.ones(N, dtype=bool)
-hit_disk = np.zeros(N, dtype=bool)
-result_color = np.zeros((N, 3))
-disk_hit_pos = np.zeros((N, 3))
-
 prev_z = pos0[:, 2].copy()
 prev_pos = pos0.copy()
 
+# Conditions to track for photon rays
+active = np.ones(N, dtype=bool)
+hit_disk = np.zeros(N, dtype=bool)
+was_captured = np.zeros(N, dtype=bool)
+result_color = np.zeros((N, 3))
+disk_hit_pos = np.zeros((N, 3))
 
 # RK4 integration
-def deriv(u_, w_):
-    return w_, -u_ + 1.5 * RS * (u_**2)
-
 max_phi_total = MAX_WINDINGS * 2 * np.pi
 nsteps = int(max_phi_total / DPHI)
 
@@ -112,14 +167,15 @@ for step in range(nsteps):
     r_new = 1.0 / np.clip(u_new, 1e-8, None)
     cosphi = np.cos(phi[idx])
     sinphi = np.sin(phi[idx])
-    pos_new = r_new[:, None] * (cosphi[:, None] * e_r[idx] + sinphi[:, None] 
+    pos_new = r_new[:, None] * (cosphi[:, None] * e_r[idx] + sinphi[:, None]
                                 * e_phi[idx])
     z_new = pos_new[:, 2]
 
-    # Check if the photon impacts the accretion disk
+    # Checks if the photon ray falls into the black hole or escapes into space
     captured = r_new <= RS * 1.001
     escaped = (r_new > ESCAPE_R)
 
+    # Check if the photon ray impacts the accretion disk
     z_prev_sub = prev_z[idxs]
     crossed = ((np.sign(z_new) != np.sign(z_prev_sub)) & (r_new >= DISK_INNER)
                 & (r_new <= DISK_OUTER))
@@ -139,6 +195,7 @@ for step in range(nsteps):
     if (captured & still).any():
         cidx = idxs[captured & still]
         active[cidx] = False
+        was_captured[cidx] = True
     if (escaped & still & ~captured).any():
         eidx = idxs[escaped & still & ~captured]
         active[eidx] = False
@@ -146,33 +203,24 @@ for step in range(nsteps):
     prev_z[idxs] = z_new
     prev_pos[idxs] = pos_new
 
-
-# Assigning color
-def temperature_to_rgb(t):
-    t = np.clip(t, 0.0, 1.0)
-    stops = np.array([
-        #[ t ,  R  ,  G  ,   B ]
-        [0.00, 0.35, 0.02, 0.00],  # Dim deep red
-        [0.50, 1.00, 0.60, 0.05],  # Orange
-        [0.65, 1.00, 0.80, 0.20],  # Orange-yellow
-        [0.85, 1.00, 0.90, 0.35],  # Yellow-white
-        [0.98, 1.00, 1.00, 1.00],  # White
-        [1.00, 0.80, 0.95, 1.00],  # Bright blue-white
-    ])
-
-    r = np.interp(t, stops[:, 0], stops[:, 1])
-    g = np.interp(t, stops[:, 0], stops[:, 2])
-    bl = np.interp(t, stops[:, 0], stops[:, 3])
-
-    return np.stack([r, g, bl], axis=-1)
-
+# Color assignments
 result_color[:] = 0.0
 
+# Creating background stars
+bg_rand = rng.random(N)
+is_star = bg_rand < STAR_DENSITY
+star_brightness = rng.uniform(0.2, 1.0, size=N)
+show_star = is_star & ~hit_disk & ~was_captured
+result_color[show_star] = star_brightness[show_star, None]
+
+# Disk shading
 if hit_disk.any():
     hp = disk_hit_pos[hit_disk]
     r_hit = np.linalg.norm(hp, axis=1)
     r_hit = np.clip(r_hit, DISK_INNER, DISK_OUTER)
 
+    # Temperature profile ~ r^(-3/4) (Shakura-Sunyaev-like folloff), 
+    # normalized to [0, 1]
     temp_raw = r_hit ** (-0.75)
     tmin, tmax = (DISK_OUTER ** (-0.75)), (DISK_INNER ** (-0.75))
     temp_norm = (temp_raw - tmin) / (tmax - tmin)
@@ -180,12 +228,14 @@ if hit_disk.any():
 
     result_color[hit_disk] = base_rgb
 
-# Image output
+# Creating the final image
 img = result_color.reshape(HEIGHT,WIDTH, 3)
 img = np.clip(img, 0.0, 1.0)
 img = img ** (1.0/2.0)
 img8 = (img * 255).astype(np.uint8)
 
 out = Image.fromarray(img8, mode='RGB')
-out.save('C:\\Users\\cedri\\Coding_Projects\\Black_Hole\\blackhole_lensing.png')
-print('Saved C:\\Users\\cedri\\Coding_Projects\\Black_Hole\\blackhole_lensing.png')
+out.save('C:\\Users\\cedri\\Coding_Projects' + 
+         '\\Black_Hole\\blackhole_lensing.png')
+print('Saved C:\\Users\\cedri\\Coding_Projects' + 
+      '\\Black_Hole\\blackhole_lensing.png')
