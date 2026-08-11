@@ -3,12 +3,12 @@ from PIL import Image
 
 # Constants
 RS = 1.0
-INCLINATION_DEG = 88.0
+INCLINATION_DEG = 87.0
 TILT_DEG = 5.0
 CAMERA_DIST = 30.0 * RS
 
-WIDTH = 620
-HEIGHT = 480
+WIDTH = 480
+HEIGHT = 370
 
 FOV_DEG = 42.0
 MAX_WINDINGS = 3.0
@@ -76,6 +76,7 @@ phi = np.zeros(N)
 active = np.ones(N, dtype=bool)
 hit_disk = np.zeros(N, dtype=bool)
 result_color = np.zeros((N, 3))
+disk_hit_pos = np.zeros((N, 3))
 
 prev_z = pos0[:, 2].copy()
 prev_pos = pos0.copy()
@@ -132,6 +133,7 @@ for step in range(nsteps):
         ci = idxs[crossed]
         hit_disk[ci] = True
         active[ci] = False
+        disk_hit_pos[ci] = hit_p
 
     still = ~crossed
     if (captured & still).any():
@@ -144,10 +146,39 @@ for step in range(nsteps):
     prev_z[idxs] = z_new
     prev_pos[idxs] = pos_new
 
+
 # Assigning color
+def temperature_to_rgb(t):
+    t = np.clip(t, 0.0, 1.0)
+    stops = np.array([
+        #[ t ,  R  ,  G  ,   B ]
+        [0.00, 0.35, 0.02, 0.00],  # Dim deep red
+        [0.50, 1.00, 0.60, 0.05],  # Orange
+        [0.65, 1.00, 0.80, 0.20],  # Orange-yellow
+        [0.85, 1.00, 0.90, 0.35],  # Yellow-white
+        [0.98, 1.00, 1.00, 1.00],  # White
+        [1.00, 0.80, 0.95, 1.00],  # Bright blue-white
+    ])
+
+    r = np.interp(t, stops[:, 0], stops[:, 1])
+    g = np.interp(t, stops[:, 0], stops[:, 2])
+    bl = np.interp(t, stops[:, 0], stops[:, 3])
+
+    return np.stack([r, g, bl], axis=-1)
+
 result_color[:] = 0.0
+
 if hit_disk.any():
-    result_color[hit_disk] = result_color[hit_disk] + 255.0
+    hp = disk_hit_pos[hit_disk]
+    r_hit = np.linalg.norm(hp, axis=1)
+    r_hit = np.clip(r_hit, DISK_INNER, DISK_OUTER)
+
+    temp_raw = r_hit ** (-0.75)
+    tmin, tmax = (DISK_OUTER ** (-0.75)), (DISK_INNER ** (-0.75))
+    temp_norm = (temp_raw - tmin) / (tmax - tmin)
+    base_rgb = temperature_to_rgb(temp_norm)
+
+    result_color[hit_disk] = base_rgb
 
 # Image output
 img = result_color.reshape(HEIGHT,WIDTH, 3)
