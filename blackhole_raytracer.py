@@ -5,15 +5,15 @@ from PIL import Image
 # To prevent a funny artifact use DPHI = 0.003, WIDTH = 960, HEIGHT = 720
 RS = 1.0  # Schwarzschild radius
 INCLINATION_DEG = 87.0  # Angle from the z-axis
-TILT_DEG = 5.0  # Angle of camera rotation (clockwise is positive)
+TILT_DEG = 3.0  # Angle of camera rotation (clockwise is positive)
 CAMERA_DIST = 30.0 * RS  # Distance of camera from the black hole
 
 # Output resolution
-WIDTH = 960
-HEIGHT = 720
+WIDTH = 620
+HEIGHT = 480
 
 FOV_DEG = 42.0  # Camera field of view (degrees)
-DPHI = 0.003  # RK4 step size in the swept angle phi
+DPHI = 0.01  # RK4 step size in the swept angle phi
 ESCAPE_R = 80.0 * RS  # Distance where a ray becomes "escaped"
 
 # How many times a ray can loop around (impacts the clarity of photon sphere)
@@ -224,9 +224,31 @@ if hit_disk.any():
     temp_raw = r_hit ** (-0.75)
     tmin, tmax = (DISK_OUTER ** (-0.75)), (DISK_INNER ** (-0.75))
     temp_norm = (temp_raw - tmin) / (tmax - tmin)
-    base_rgb = temperature_to_rgb(temp_norm)
 
-    result_color[hit_disk] = base_rgb
+    # Approximation of Doppler beaming
+    v = np.sqrt(np.clip(RS / (2.0 * r_hit), 0.0, 0.98))
+    gamma = 1.0 / np.sqrt(1.0 - (v**2))
+
+    radial_hat = hp / r_hit[:, None]
+    tang_hat = np.stack([-radial_hat[:, 1], radial_hat[:, 0], np.zeros_like(radial_hat[:, 0])], axis=-1)
+    vel_hat = tang_hat  # Disk is assumed to rotate counter-clockwise viewed from +z
+
+    los = cam_pos[None, :] - hp
+    los = los / np.linalg.norm(los, axis=1, keepdims=True)
+
+    cos_angle = np.einsum('ij,ij->i', vel_hat, los)
+    doppler = 1.0 / (gamma * (1.0 - v*cos_angle))
+    grav_redshift = np.sqrt(np.clip(1.0 - RS / r_hit, 1e-6, None))
+    shift = doppler * grav_redshift
+
+    brightness = np.clip(shift**3, 0.05, 8.0)
+    brightness = brightness / (1.0 + 0.15 * brightness)
+
+    color_shift = np.clip(0.5 + 5.0 * (shift - 1.0), 0.0, 1.0)
+    rgb = temperature_to_rgb(np.clip(temp_norm + 0.25 * (color_shift - 0.5), 0, 1))
+
+    disk_rgb = rgb * brightness[:, None]
+    result_color[hit_disk] = disk_rgb
 
 # Creating the final image
 img = result_color.reshape(HEIGHT,WIDTH, 3)
