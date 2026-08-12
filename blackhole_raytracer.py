@@ -1,19 +1,20 @@
 import numpy as np
 from PIL import Image
+from scipy.ndimage import gaussian_filter
 
 # Constants
 # To prevent a funny artifact use DPHI = 0.003, WIDTH = 960, HEIGHT = 720
 RS = 1.0  # Schwarzschild radius
-INCLINATION_DEG = 87.0  # Angle from the z-axis
-TILT_DEG = 3.0  # Angle of camera rotation (clockwise is positive)
+INCLINATION_DEG = 88.0  # Angle from the z-axis
+TILT_DEG = -5.0  # Angle of camera rotation (clockwise is positive)
 CAMERA_DIST = 30.0 * RS  # Distance of camera from the black hole
 
 # Output resolution
-WIDTH = 620
-HEIGHT = 480
+WIDTH = 960
+HEIGHT = 720
 
 FOV_DEG = 42.0  # Camera field of view (degrees)
-DPHI = 0.01  # RK4 step size in the swept angle phi
+DPHI = 0.003  # RK4 step size in the swept angle phi
 ESCAPE_R = 80.0 * RS  # Distance where a ray becomes "escaped"
 
 # How many times a ray can loop around (impacts the clarity of photon sphere)
@@ -22,6 +23,17 @@ MAX_WINDINGS = 5.0
 # Accretion disk dimensions
 DISK_INNER = 3.0 * RS
 DISK_OUTER = 16.0 * RS
+
+BLOOM_ENABLED = True  # Adds a glow to specified pixels
+
+DISK_BLOOM_THRESHOLD = 0.05  # Only pixels brighter than this glow
+DISK_BLOOM_BOOST = 2.5  # Multiplies the light before blurring
+# Formatted as (blur radius in pixels, contribution weight)
+DISK_BLOOM_LAYERS = [(7.0, 0.9), (15.0, 0.5), (40.0, 0.3)]
+
+STAR_BLOOM_THRESHOLD = 0.50
+STAR_BLOOM_BOOST = 1.5
+STAR_BLOOM_LAYERS = [(7.0, 0.9), (15.0, 0.5), (40.0, 0.3)]
 
 # Star paramiters
 STAR_DENSITY = 0.0015  # Probability that a bakground pixel will be a star
@@ -73,6 +85,31 @@ def temperature_to_rgb(t):
     bl = np.interp(t, stops[:, 0], stops[:, 3])
 
     return np.stack([r, g, bl], axis=-1)
+
+
+def apply_bloom(img, threshold, layers, boost):
+    """
+    Adds a glow around spesified pixels by blurring only the light above the 
+    threshold and adding it ontop of the original image at several blur radii.
+
+    Parameters:
+        img: the image to be blurred.
+        threshold: the threshold at which the pixels will be blurred.
+        layers: the radii in which the pixels will be blurred around.
+        boost: the factor the light is multiplied by bafore blurring.
+
+    Returns:
+        The new immage that has been blurred.
+    """
+    lum = img[..., 0] * 0.2126 + img[..., 1] * 0.7152 + img[..., 2] * 0.0722
+    excess = np.clip(lum - threshold, 0.0, None) * boost
+    bright_pass = img * (excess / np.maximum(lum, 1e-6))[..., None]
+
+    glow = np.zeros_like(img)
+    for sigma, weight in layers:
+        glow += weight * gaussian_filter(bright_pass, sigma=(sigma, sigma, 0))
+
+    return img + glow
 
 
 # Setting up camera using provided constants
@@ -137,7 +174,8 @@ prev_pos = pos0.copy()
 active = np.ones(N, dtype=bool)
 hit_disk = np.zeros(N, dtype=bool)
 was_captured = np.zeros(N, dtype=bool)
-result_color = np.zeros((N, 3))
+result_disk_color = np.zeros((N, 3))
+result_star_color = np.zeros((N, 3))
 disk_hit_pos = np.zeros((N, 3))
 
 # RK4 integration
@@ -204,14 +242,15 @@ for step in range(nsteps):
     prev_pos[idxs] = pos_new
 
 # Color assignments
-result_color[:] = 0.0
+#result_disk_color[:] = 0.0
+#result_star_color[:] = 0.0
 
 # Creating background stars
 bg_rand = rng.random(N)
 is_star = bg_rand < STAR_DENSITY
 star_brightness = rng.uniform(0.2, 1.0, size=N)
 show_star = is_star & ~hit_disk & ~was_captured
-result_color[show_star] = star_brightness[show_star, None]
+result_star_color[show_star] = star_brightness[show_star, None]
 
 # Disk shading
 if hit_disk.any():
@@ -248,10 +287,18 @@ if hit_disk.any():
     rgb = temperature_to_rgb(np.clip(temp_norm + 0.25 * (color_shift - 0.5), 0, 1))
 
     disk_rgb = rgb * brightness[:, None]
-    result_color[hit_disk] = disk_rgb
+    result_disk_color[hit_disk] = disk_rgb
 
 # Creating the final image
-img = result_color.reshape(HEIGHT,WIDTH, 3)
+#img = result_color.reshape(HEIGHT,WIDTH, 3)
+star_img = result_star_color.reshape(HEIGHT,WIDTH, 3)
+disk_img = result_disk_color.reshape(HEIGHT,WIDTH, 3)
+
+if BLOOM_ENABLED:
+    star_img = apply_bloom(star_img, STAR_BLOOM_THRESHOLD, STAR_BLOOM_LAYERS, STAR_BLOOM_BOOST)
+    disk_img = apply_bloom(disk_img, DISK_BLOOM_THRESHOLD, DISK_BLOOM_LAYERS, DISK_BLOOM_BOOST)
+
+img = star_img + disk_img
 img = np.clip(img, 0.0, 1.0)
 img = img ** (1.0/2.0)
 img8 = (img * 255).astype(np.uint8)
