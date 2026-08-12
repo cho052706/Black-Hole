@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter
 RS = 1.0  # Schwarzschild radius
 INCLINATION_DEG = 88.0  # Angle from the z-axis
 TILT_DEG = -5.0  # Angle of camera rotation (clockwise is positive)
-CAMERA_DIST = 30.0 * RS  # Distance of camera from the black hole
+CAMERA_DIST = 20.0 * RS  # Distance of camera from the black hole
 
 # Output resolution
 WIDTH = 960
